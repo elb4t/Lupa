@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.Image
 import android.media.ImageReader
 import android.os.Bundle
@@ -22,7 +23,7 @@ import android.view.TextureView
 import android.view.View
 import android.widget.Toast
 import java.io.*
-import java.util.*
+import kotlin.experimental.and
 
 
 class MainActivity : AppCompatActivity() {
@@ -114,10 +115,11 @@ class MainActivity : AppCompatActivity() {
             mCameraId = manager.cameraIdList[0] //La primera cámara
             val characteristics = manager.getCameraCharacteristics(mCameraId)
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
-            dimensionesPreview = map.getOutputSizes(SurfaceTexture::class.java)[0] //El primer tamaño posible. Normalmente el mayor
+            configurarImageReader(map)
+            /*dimensionesPreview = map.getOutputSizes(SurfaceTexture::class.java)[0] //El primer tamaño posible. Normalmente el mayor
             dimensionesJPEG = map.getOutputSizes(ImageFormat.JPEG)[0] //El primer tamaño posible. Normalmente el mayor
             Log.e(TAG, "Dimensiones Preview = $dimensionesPreview")
-            Log.e(TAG, "Dimensiones JPEG = $dimensionesJPEG")
+            Log.e(TAG, "Dimensiones JPEG = $dimensionesJPEG")*/
 
             manager.openCamera(mCameraId, stateCallback, null)
         } catch (e: CameraAccessException) {
@@ -147,12 +149,14 @@ class MainActivity : AppCompatActivity() {
     private fun crearPreviewCamara() {
         try {
             val texture = textureview.surfaceTexture!!
-            texture.setDefaultBufferSize(dimensionesPreview!!.width, dimensionesPreview!!.height)
+            texture.setDefaultBufferSize(dimensionesImagen!!.width, dimensionesImagen!!.height)
             val surface = Surface(texture)
             mPreviewRequestBuilder = mCameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            var surfaces: ArrayList<Surface> = ArrayList()
             mPreviewRequestBuilder?.addTarget(surface)
-            mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-            mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+            surfaces.add(surface)
+            mPreviewRequestBuilder?.addTarget(mImageReader.surface)
+            surfaces.add(mImageReader.surface)
 
             val statecallback: CameraCaptureSession.StateCallback = object : CameraCaptureSession.StateCallback() {
                 override fun onConfigureFailed(cameraCaptureSession: CameraCaptureSession) {
@@ -170,24 +174,21 @@ class MainActivity : AppCompatActivity() {
                     comenzarPreview()
                 }
             }
-            mCameraDevice?.createCaptureSession(Arrays.asList(surface), statecallback, null)
+            mCameraDevice?.createCaptureSession(surfaces, statecallback, null)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
     }
 
     private fun comenzarPreview() {
-        configurarImageReader()
+        if (null == mCameraDevice) {
+            Log.e(TAG, "Error en comenzarPreview")
+        }
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
 
         try {
-            val texture = textureview.surfaceTexture!!
-            texture.setDefaultBufferSize(dimensionesPreview!!.width, dimensionesPreview!!.height)
-            val surface = Surface(texture)
-            mPreviewRequestBuilder = mCameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-            mPreviewRequestBuilder?.addTarget(surface)
-            mCameraDevice?.createCaptureSession(
-                    Arrays.asList(surface, mImageReader?.surface),
-                    cameraCaptureSessionStatecallback, null)
+            mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), null, mBackgroundHandler)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
@@ -227,8 +228,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        private fun guardar(bytes: ByteArray){
-            val fichero:File = File("${Environment.getExternalStorageDirectory()}/micamara2.jpg")
+
+        private fun guardar(bytes: ByteArray) {
+            val fichero: File = File("${Environment.getExternalStorageDirectory()}/micamara2.jpg")
             Toast.makeText(this@MainActivity, "/micamara2.jpg saved", Toast.LENGTH_SHORT).show()
 
             var output: OutputStream? = null
@@ -236,7 +238,7 @@ class MainActivity : AppCompatActivity() {
                 output = FileOutputStream(fichero)
                 output.write(bytes)
                 output.close()
-            }finally {
+            } finally {
                 if (null != output) {
                     output.close()
                 }
@@ -290,6 +292,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun configurarImageReader(map: StreamConfigurationMap) {
+        val tam = map.getOutputSizes(ImageFormat.YUV_420_888)[0]
+        mImageReader = ImageReader.newInstance(tam.width, tam.height, ImageFormat.YUV_420_888, 2)
+        mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler)
+    }
+
+    private val mOnImageAvailableListener: ImageReader.OnImageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
+        val imagen = reader.acquireLatestImage() ?: return@OnImageAvailableListener
+        procesarImagen(imagen)
+        imagen.close()
+    }
+
+    private fun procesarImagen(imagen: Image){
+        val width = imagen.width
+        val height = imagen.height
+        val planes:Array<Image.Plane> = imagen.planes
+        val yplane:Image.Plane= planes[0]
+        val uplane:Image.Plane= planes[1]
+
+        val y_pixelstride = yplane.pixelStride
+        val y_rowstride = yplane.rowStride
+        val u_pixelstride = uplane.pixelStride
+        val u_rowstride = uplane.rowStride
+
+        Log.v(TAG, "Tengo una imagen YUV420 !! $width x $height")
+        Log.v(TAG, "Tengo una imagen YUV420 Stride PixelY= $y_pixelstride StridePixelUV= $u_pixelstride StrideRowY= $y_rowstride RowStrideUV= $u_rowstride ")
+        val x = width / 2
+        val y = height / 2
+
+        val yBuffer = imagen.planes[0].buffer
+        val pixelcentral:Byte = yBuffer.get(x * y_pixelstride + y * y_rowstride)
+        val pixel = pixelcentral and 0xFF.toByte()
+        Log.v(TAG, "Tengo una imagen YUV420. Pixel Central=$pixel")
+    }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         when (requestCode) {
             1 -> {
