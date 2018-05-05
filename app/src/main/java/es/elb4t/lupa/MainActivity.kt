@@ -131,7 +131,7 @@ class MainActivity : AppCompatActivity() {
             mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
             mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
 
-            mCameraDevice?.createCaptureSession(Arrays.asList(surface), statecallback, null)
+            mCameraDevice?.createCaptureSession(Arrays.asList(surface), statePreviewcallback, null)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
@@ -290,7 +290,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val statecallback: CameraCaptureSession.StateCallback = object : CameraCaptureSession.StateCallback() {
+    private val statePreviewcallback: CameraCaptureSession.StateCallback = object : CameraCaptureSession.StateCallback() {
         override fun onConfigureFailed(cameraCaptureSession: CameraCaptureSession) {
             Toast.makeText(this@MainActivity, "Configuration change failed", Toast.LENGTH_SHORT).show()
         }
