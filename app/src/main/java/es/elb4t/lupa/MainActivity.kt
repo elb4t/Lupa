@@ -116,10 +116,10 @@ class MainActivity : AppCompatActivity() {
             val characteristics = manager.getCameraCharacteristics(mCameraId)
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
             configurarImageReader(map)
-            /*dimensionesPreview = map.getOutputSizes(SurfaceTexture::class.java)[0] //El primer tamaño posible. Normalmente el mayor
+            dimensionesPreview = map.getOutputSizes(SurfaceTexture::class.java)[0] //El primer tamaño posible. Normalmente el mayor
             dimensionesJPEG = map.getOutputSizes(ImageFormat.JPEG)[0] //El primer tamaño posible. Normalmente el mayor
             Log.e(TAG, "Dimensiones Preview = $dimensionesPreview")
-            Log.e(TAG, "Dimensiones JPEG = $dimensionesJPEG")*/
+            Log.e(TAG, "Dimensiones JPEG = $dimensionesJPEG")
 
             manager.openCamera(mCameraId, stateCallback, null)
         } catch (e: CameraAccessException) {
@@ -149,7 +149,7 @@ class MainActivity : AppCompatActivity() {
     private fun crearPreviewCamara() {
         try {
             val texture = textureview.surfaceTexture!!
-            texture.setDefaultBufferSize(dimensionesImagen!!.width, dimensionesImagen!!.height)
+            texture.setDefaultBufferSize(dimensionesPreview!!.width, dimensionesPreview!!.height)
             val surface = Surface(texture)
             mPreviewRequestBuilder = mCameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             var surfaces: ArrayList<Surface> = ArrayList()
