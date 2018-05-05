@@ -3,9 +3,9 @@ package es.elb4t.lupa
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.ImageFormat
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
-import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.Image
 import android.media.ImageReader
 import android.os.Bundle
@@ -18,12 +18,13 @@ import android.support.v4.app.ActivityCompat
 import android.support.v7.app.AppCompatActivity
 import android.util.Log
 import android.util.Size
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.widget.Toast
 import java.io.*
-import kotlin.experimental.and
+import java.util.*
 
 
 class MainActivity : AppCompatActivity() {
@@ -49,12 +50,20 @@ class MainActivity : AppCompatActivity() {
     private var dimensionesPreview: Size? = null
     private var dimensionesJPEG: Size? = null
 
+    private var separacion = 0f
+    private var zoom_level = 1.0
+    private val pixels_anchura_sensor: Int = 0
+    private val pixels_altura_sensor: Int = 0
+    private var maxzoom: Float = 0.toFloat()
+    private var zoom: Rect? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         ActivityCompat.requestPermissions(this, PERMISOS, 1)
         textureview = findViewById<View>(R.id.textureView) as TextureView
         assert(textureview != null)
+        textureview.setOnTouchListener(handleTouch)
 
         btnCapture = findViewById(R.id.btnCaptura)
         btnCapture.setOnClickListener(View.OnClickListener {
@@ -75,21 +84,6 @@ class MainActivity : AppCompatActivity() {
         stopBackgroundThread()
     }
 
-    val textureListener: TextureView.SurfaceTextureListener = object : TextureView.SurfaceTextureListener {
-        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
-        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-            return false
-        }
-
-        override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
-        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-            //open your camera here
-            Log.i(TAG, "Abriendo camara desde onSurfaceTextureAvailable")
-            abrirCamara()
-        }
-
-    }
-
     protected fun startBackgroundThread() {
         mBackgroundThread = HandlerThread("Camera Background")
         mBackgroundThread?.start()
@@ -105,7 +99,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: InterruptedException) {
             e.printStackTrace()
         }
-
     }
 
     private fun abrirCamara() {
@@ -115,7 +108,6 @@ class MainActivity : AppCompatActivity() {
             mCameraId = manager.cameraIdList[0] //La primera cámara
             val characteristics = manager.getCameraCharacteristics(mCameraId)
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
-            configurarImageReader(map)
             dimensionesPreview = map.getOutputSizes(SurfaceTexture::class.java)[0] //El primer tamaño posible. Normalmente el mayor
             dimensionesJPEG = map.getOutputSizes(ImageFormat.JPEG)[0] //El primer tamaño posible. Normalmente el mayor
             Log.e(TAG, "Dimensiones Preview = $dimensionesPreview")
@@ -129,66 +121,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val stateCallback: CameraDevice.StateCallback = object : CameraDevice.StateCallback() {
-        override fun onOpened(camera: CameraDevice) {
-            Log.e(TAG, "onOpened")
-            mCameraDevice = camera
-            crearPreviewCamara()
-        }
-
-        override fun onDisconnected(camera: CameraDevice) {
-            camera.close()
-        }
-
-        override fun onError(camera: CameraDevice, error: Int) {
-            camera.close()
-            mCameraDevice = null
-        }
-    }
-
     private fun crearPreviewCamara() {
         try {
             val texture = textureview.surfaceTexture!!
             texture.setDefaultBufferSize(dimensionesPreview!!.width, dimensionesPreview!!.height)
             val surface = Surface(texture)
             mPreviewRequestBuilder = mCameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-            var surfaces: ArrayList<Surface> = ArrayList()
             mPreviewRequestBuilder?.addTarget(surface)
-            surfaces.add(surface)
-            mPreviewRequestBuilder?.addTarget(mImageReader.surface)
-            surfaces.add(mImageReader.surface)
+            mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+            mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
 
-            val statecallback: CameraCaptureSession.StateCallback = object : CameraCaptureSession.StateCallback() {
-                override fun onConfigureFailed(cameraCaptureSession: CameraCaptureSession) {
-                    Toast.makeText(this@MainActivity, "Configuration change failed", Toast.LENGTH_SHORT).show()
-                }
-
-                override fun onConfigured(cameraCaptureSession: CameraCaptureSession) {
-                    Log.i(TAG, "Sesión de captura configurada para preview")
-                    //The camera is closed
-                    if (null == mCameraDevice) {
-                        return
-                    }
-                    // Cuando la sesion este lista empezamos a visualizer imags .
-                    mCaptureSession = cameraCaptureSession
-                    comenzarPreview()
-                }
-            }
-            mCameraDevice?.createCaptureSession(surfaces, statecallback, null)
+            mCameraDevice?.createCaptureSession(Arrays.asList(surface), statecallback, null)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
     }
 
     private fun comenzarPreview() {
-        if (null == mCameraDevice) {
-            Log.e(TAG, "Error en comenzarPreview")
-        }
-        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        configurarImageReader()
 
         try {
-            mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), null, mBackgroundHandler)
+            val texture = textureview.surfaceTexture!!
+            texture.setDefaultBufferSize(dimensionesPreview!!.width, dimensionesPreview!!.height)
+            val surface = Surface(texture)
+            mPreviewRequestBuilder = mCameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            mPreviewRequestBuilder?.addTarget(surface)
+            mCameraDevice?.createCaptureSession(
+                    Arrays.asList(surface, mImageReader?.surface),
+                    cameraCaptureSessionStatecallback, null)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
@@ -206,6 +166,73 @@ class MainActivity : AppCompatActivity() {
         } catch (e: CameraAccessException) {
             e.printStackTrace();
         }
+    }
+
+    protected fun updatePreview() {
+        if (null == mCameraDevice) {
+            Log.e(TAG, "updatePreview error, return")
+        }
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        try {
+            mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), null, mBackgroundHandler)
+            Log.i(TAG, "*****setRepeatingRequest. Captura preview arrancada")
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun tomarImagen() {
+        try {
+            mJPEGRequestBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+            mJPEGRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            mJPEGRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+
+            mCaptureSession?.capture(mJPEGRequestBuilder.build(), capture_Callback, null)
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun getFingerSpacing(event: MotionEvent): Float {
+        val x = event.getX(0) - event.getX(1)
+        val y = event.getY(0) - event.getY(1)
+        return Math.sqrt((x * x + y * y).toDouble()).toFloat()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        when (requestCode) {
+            1 -> {
+                grantResults.forEach { result ->
+                    if (result != PackageManager.PERMISSION_GRANTED) {
+                        Snackbar.make(textureview,
+                                "Hay permisos necesarios para la aplicación sin activar", Snackbar.LENGTH_INDEFINITE)
+                                .setAction("Activar", {
+                                    ActivityCompat.requestPermissions(this, PERMISOS, 1)
+                                }).show()
+                        return
+                    }
+                }
+                return
+            }
+        }
+    }
+
+    //Listeners
+    private val textureListener: TextureView.SurfaceTextureListener = object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+            return false
+        }
+
+        override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+            //open your camera here
+            Log.i(TAG, "Abriendo camara desde onSurfaceTextureAvailable")
+            abrirCamara()
+        }
+
     }
 
     private val readerListener: ImageReader.OnImageAvailableListener = object : ImageReader.OnImageAvailableListener {
@@ -246,6 +273,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val stateCallback: CameraDevice.StateCallback = object : CameraDevice.StateCallback() {
+        override fun onOpened(camera: CameraDevice) {
+            Log.e(TAG, "onOpened")
+            mCameraDevice = camera
+            crearPreviewCamara()
+        }
+
+        override fun onDisconnected(camera: CameraDevice) {
+            camera.close()
+        }
+
+        override fun onError(camera: CameraDevice, error: Int) {
+            camera.close()
+            mCameraDevice = null
+        }
+    }
+
+    private val statecallback: CameraCaptureSession.StateCallback = object : CameraCaptureSession.StateCallback() {
+        override fun onConfigureFailed(cameraCaptureSession: CameraCaptureSession) {
+            Toast.makeText(this@MainActivity, "Configuration change failed", Toast.LENGTH_SHORT).show()
+        }
+
+        override fun onConfigured(cameraCaptureSession: CameraCaptureSession) {
+            Log.i(TAG, "Sesión de captura configurada para preview")
+            //The camera is closed
+            if (null == mCameraDevice) {
+                return
+            }
+            // Cuando la sesion este lista empezamos a visualizer imags .
+            mCaptureSession = cameraCaptureSession
+            comenzarPreview()
+        }
+    }
+
     private val cameraCaptureSessionStatecallback: CameraCaptureSession.StateCallback = object : CameraCaptureSession.StateCallback() {
         override fun onConfigured(cameraCaptureSession: CameraCaptureSession) {
             if (null == mCameraDevice) {
@@ -260,87 +321,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    protected fun updatePreview() {
-        if (null == mCameraDevice) {
-            Log.e(TAG, "updatePreview error, return")
-        }
-        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-        try {
-            mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), null, mBackgroundHandler)
-            Log.i(TAG, "*****setRepeatingRequest. Captura preview arrancada")
-        } catch (e: CameraAccessException) {
-            e.printStackTrace()
+    private val capture_Callback: CameraCaptureSession.CaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            comenzarPreview()
         }
     }
 
-    private fun tomarImagen() {
-        try {
-            mJPEGRequestBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-            mJPEGRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-            mJPEGRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-
-            val CaptureCallback: CameraCaptureSession.CaptureCallback = object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-                    comenzarPreview()
-                }
-            }
-            mCaptureSession?.capture(mJPEGRequestBuilder.build(), CaptureCallback, null)
-        } catch (e: CameraAccessException) {
-            e.printStackTrace()
-        }
-    }
-
-    fun configurarImageReader(map: StreamConfigurationMap) {
-        val tam = map.getOutputSizes(ImageFormat.YUV_420_888)[0]
-        mImageReader = ImageReader.newInstance(tam.width, tam.height, ImageFormat.YUV_420_888, 2)
-        mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler)
-    }
-
-    private val mOnImageAvailableListener: ImageReader.OnImageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
-        val imagen = reader.acquireLatestImage() ?: return@OnImageAvailableListener
-        procesarImagen(imagen)
-        imagen.close()
-    }
-
-    private fun procesarImagen(imagen: Image){
-        val width = imagen.width
-        val height = imagen.height
-        val planes:Array<Image.Plane> = imagen.planes
-        val yplane:Image.Plane= planes[0]
-        val uplane:Image.Plane= planes[1]
-
-        val y_pixelstride = yplane.pixelStride
-        val y_rowstride = yplane.rowStride
-        val u_pixelstride = uplane.pixelStride
-        val u_rowstride = uplane.rowStride
-
-        Log.v(TAG, "Tengo una imagen YUV420 !! $width x $height")
-        Log.v(TAG, "Tengo una imagen YUV420 Stride PixelY= $y_pixelstride StridePixelUV= $u_pixelstride StrideRowY= $y_rowstride RowStrideUV= $u_rowstride ")
-        val x = width / 2
-        val y = height / 2
-
-        val yBuffer = imagen.planes[0].buffer
-        val pixelcentral:Byte = yBuffer.get(x * y_pixelstride + y * y_rowstride)
-        val pixel = pixelcentral and 0xFF.toByte()
-        Log.v(TAG, "Tengo una imagen YUV420. Pixel Central=$pixel")
-    }
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        when (requestCode) {
-            1 -> {
-                grantResults.forEach { result ->
-                    if (result != PackageManager.PERMISSION_GRANTED) {
-                        Snackbar.make(textureview,
-                                "Hay permisos necesarios para la aplicación sin activar", Snackbar.LENGTH_INDEFINITE)
-                                .setAction("Activar", {
-                                    ActivityCompat.requestPermissions(this, PERMISOS, 1)
-                                }).show()
-                        return
+    private val handleTouch: View.OnTouchListener = object : View.OnTouchListener {
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            val action = event.action
+            val sep_actual: Float
+            if (event.pointerCount > 1) {
+                sep_actual = getFingerSpacing(event)
+                if (separacion != 0f) {
+                    if (sep_actual > separacion && maxzoom > zoom_level + 0.1) {
+                        zoom_level += 0.1;
+                    } else if (sep_actual < separacion && zoom_level >= 1.1) {
+                        zoom_level -= 0.1;
                     }
+                    val width = (pixels_anchura_sensor / zoom_level).toInt()
+                    val height = (pixels_altura_sensor / zoom_level).toInt()
+                    val startx = (pixels_anchura_sensor - width) / 2
+                    val starty = (pixels_altura_sensor - height) / 2
+                    val zonaActiva = Rect(startx, starty, startx + width, starty + height)
+                    mPreviewRequestBuilder?.set(CaptureRequest.SCALER_CROP_REGION, zonaActiva)
                 }
-                return
+                separacion = sep_actual
+            } else {
+                separacion = 0f
             }
+            try {
+                mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), capture_Callback, null)
+            } catch (e: CameraAccessException) {
+                e.printStackTrace()
+            } catch (ex: NullPointerException) {
+                ex.printStackTrace()
+            }
+            return true
         }
     }
 }
