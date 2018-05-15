@@ -18,6 +18,7 @@ import android.support.v4.app.ActivityCompat
 import android.support.v7.app.AppCompatActivity
 import android.util.Log
 import android.util.Size
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
@@ -40,7 +41,7 @@ class MainActivity : AppCompatActivity() {
     private var mBackgroundHandler: Handler? = null
 
     var separacion = 0f
-    var zoom_level = 1.0
+    var zoom_level = 0.0
     private var pixels_anchura_sensor: Int = 0
     private var pixels_altura_sensor: Int = 0
     var maxzoom: Float = 0.toFloat()
@@ -66,6 +67,7 @@ class MainActivity : AppCompatActivity() {
         btnCaptura.setOnClickListener {
             tomarImagen()
         }
+        textureview.setOnTouchListener(handleTouch)
     }
 
     override fun onResume() {
@@ -101,7 +103,7 @@ class MainActivity : AppCompatActivity() {
             mCameraId = manager.cameraIdList[0] //La primera cámara
             val characteristics = manager.getCameraCharacteristics(mCameraId)
             maxzoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)
-            val m:Rect = characteristics.get( CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+            val m: Rect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
             pixels_anchura_sensor = m.width()
             pixels_altura_sensor = m.height()
 
@@ -109,7 +111,7 @@ class MainActivity : AppCompatActivity() {
 
             dimensionesImagen = map.getOutputSizes(SurfaceTexture::class.java)[0]
             dimensionesJPEG = map.getOutputSizes(ImageFormat.JPEG)[0]
-            zoom_level = maxzoom.toDouble()
+            //zoom_level = maxzoom.toDouble()
 
             val width = (pixels_anchura_sensor / zoom_level).toInt()
             val height = (pixels_altura_sensor / zoom_level).toInt()
@@ -228,6 +230,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun getFingerSpacing(event: MotionEvent): Float {
+        val x = event.getX(0) - event.getX(1)
+        val y = event.getY(0) - event.getY(1)
+        return Math.sqrt((x * x + y * y).toDouble()).toFloat()
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         when (requestCode) {
             1 -> {
@@ -312,7 +320,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        private fun guardar(bytes: ByteArray){
+
+        private fun guardar(bytes: ByteArray) {
             val fichero: File = File("${Environment.getExternalStorageDirectory()}/micamara2.jpg")
             Toast.makeText(this@MainActivity, "/micamara2.jpg saved", Toast.LENGTH_SHORT).show()
 
@@ -321,11 +330,44 @@ class MainActivity : AppCompatActivity() {
                 output = FileOutputStream(fichero)
                 output.write(bytes)
                 output.close()
-            }finally {
+            } finally {
                 if (null != output) {
                     output.close()
                 }
             }
         }
+    }
+
+    private val handleTouch: View.OnTouchListener = View.OnTouchListener { v, event ->
+        val action = event.action
+        val sep_actual: Float
+        if (event.getPointerCount() > 1) {
+            sep_actual = getFingerSpacing(event)
+            if (separacion != 0f) {
+                if (sep_actual > separacion && maxzoom > zoom_level + 0.1) {
+                    zoom_level += 0.1
+                } else if (sep_actual < separacion && zoom_level >= 1.1) {
+                    zoom_level -= 0.1
+                }
+                val width = (pixels_anchura_sensor / zoom_level).toInt()
+                val height = (pixels_altura_sensor / zoom_level).toInt()
+                val startx = (pixels_anchura_sensor - width) / 2
+                val starty = (pixels_altura_sensor - height) / 2
+                val zonaActiva = Rect(startx, starty, startx + width, starty + height)
+                zoom = zonaActiva
+                mPreviewRequestBuilder?.set(CaptureRequest.SCALER_CROP_REGION, zonaActiva)
+            }
+            separacion = sep_actual
+        } else {
+            separacion = 0f
+        }
+        try {
+            mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), null, null)
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        } catch (ex: NullPointerException) {
+            ex.printStackTrace()
+        }
+        return@OnTouchListener true
     }
 }
