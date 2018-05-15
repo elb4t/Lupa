@@ -2,12 +2,17 @@ package es.elb4t.lupa
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.media.Image
+import android.media.ImageReader
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.support.design.widget.FloatingActionButton
 import android.support.design.widget.Snackbar
 import android.support.v4.app.ActivityCompat
 import android.support.v7.app.AppCompatActivity
@@ -17,9 +22,9 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.widget.Toast
+import kotlinx.android.synthetic.main.activity_main.*
+import java.io.*
 import java.util.*
-
-
 
 
 class MainActivity : AppCompatActivity() {
@@ -41,6 +46,11 @@ class MainActivity : AppCompatActivity() {
     var maxzoom: Float = 0.toFloat()
     var zoom: Rect? = null
 
+    private val btnCapture: FloatingActionButton? = null
+    private var mJPEGRequestBuilder: CaptureRequest.Builder? = null
+    private var mImageReader: ImageReader? = null
+    private var dimensionesJPEG: Size? = null
+
     val PERMISOS = arrayOf(
             android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
             android.Manifest.permission.CAMERA
@@ -52,6 +62,10 @@ class MainActivity : AppCompatActivity() {
         ActivityCompat.requestPermissions(this, PERMISOS, 1)
         textureview = findViewById<View>(R.id.textureView) as TextureView
         assert(textureview != null)
+
+        btnCaptura.setOnClickListener {
+            tomarImagen()
+        }
     }
 
     override fun onResume() {
@@ -94,6 +108,7 @@ class MainActivity : AppCompatActivity() {
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
 
             dimensionesImagen = map.getOutputSizes(SurfaceTexture::class.java)[0]
+            dimensionesJPEG = map.getOutputSizes(ImageFormat.JPEG)[0]
             zoom_level = maxzoom.toDouble()
 
             val width = (pixels_anchura_sensor / zoom_level).toInt()
@@ -104,7 +119,7 @@ class MainActivity : AppCompatActivity() {
 
             zoom = zonaActiva
 
-            Log.i(TAG, "Dimensiones Imagen = $dimensionesImagen Dimensiones Sensor: $m Maxzoom= $maxzoom")
+            Log.e(TAG, "Dimensiones Imagen = $dimensionesImagen , Dimensiones JPEG = $dimensionesJPEG , Dimensiones Sensor: $m Maxzoom= $maxzoom")
             manager.openCamera(mCameraId, stateCallback, null)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
@@ -112,7 +127,6 @@ class MainActivity : AppCompatActivity() {
             e.printStackTrace()
         }
     }
-
 
     private fun crearPreviewCamara() {
         try {
@@ -151,13 +165,67 @@ class MainActivity : AppCompatActivity() {
         if (null == mCameraDevice) {
             Log.e(TAG, "updatePreview error, return")
         }
+        configurarImageReader()
         try {
-            mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), null, mBackgroundHandler)
-            Log.v(TAG, "*****setRepeatingRequest")
+            val texture = textureview.surfaceTexture!!
+            texture.setDefaultBufferSize(dimensionesImagen!!.width, dimensionesImagen!!.height)
+            val surface = Surface(texture)
+            mPreviewRequestBuilder = mCameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            mPreviewRequestBuilder?.addTarget(surface)
+            mPreviewRequestBuilder?.set(CaptureRequest.SCALER_CROP_REGION, zoom)
+            mCameraDevice?.createCaptureSession(
+                    Arrays.asList(surface, mImageReader?.surface),
+                    cameraCaptureSessionStatecallback, null)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
+    }
 
+    private fun configurarImageReader() {
+        try {
+            mImageReader = ImageReader.newInstance(dimensionesJPEG!!.width, dimensionesJPEG!!.height, ImageFormat.JPEG, 1)
+            mImageReader?.setOnImageAvailableListener(readerListener, mBackgroundHandler)
+            mJPEGRequestBuilder = mCameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+
+            //Decirle donde se dejarán las imágenes
+            mJPEGRequestBuilder?.addTarget(mImageReader?.surface)
+
+        } catch (e: CameraAccessException) {
+            e.printStackTrace();
+        }
+    }
+
+    protected fun updatePreview() {
+        if (null == mCameraDevice) {
+            Log.e(TAG, "updatePreview error, return")
+        }
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        mPreviewRequestBuilder?.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        try {
+            mCaptureSession?.setRepeatingRequest(mPreviewRequestBuilder?.build(), null, mBackgroundHandler)
+            Log.i(TAG, "*****setRepeatingRequest. Captura preview arrancada")
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun tomarImagen() {
+        try {
+            mJPEGRequestBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+            mJPEGRequestBuilder?.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            mJPEGRequestBuilder?.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            mJPEGRequestBuilder?.set(CaptureRequest.SCALER_CROP_REGION, zoom)
+
+            val captureCallback: CameraCaptureSession.CaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                    comenzarPreview()
+                }
+            }
+            mCaptureSession?.capture(mJPEGRequestBuilder?.build(), captureCallback, null)
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
@@ -207,6 +275,57 @@ class MainActivity : AppCompatActivity() {
         override fun onError(camera: CameraDevice, error: Int) {
             camera.close()
             mCameraDevice = null
+        }
+    }
+
+    private val cameraCaptureSessionStatecallback: CameraCaptureSession.StateCallback = object : CameraCaptureSession.StateCallback() {
+        override fun onConfigured(cameraCaptureSession: CameraCaptureSession) {
+            if (null == mCameraDevice) {
+                return
+            }
+            mCaptureSession = cameraCaptureSession
+            updatePreview()
+        }
+
+        override fun onConfigureFailed(camCaptureSession: CameraCaptureSession) {
+            Toast.makeText(this@MainActivity, "Configuracion fallida", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val readerListener: ImageReader.OnImageAvailableListener = object : ImageReader.OnImageAvailableListener {
+        override fun onImageAvailable(reader: ImageReader) {
+            var imagen: Image? = null
+            try {
+                imagen = reader.acquireLatestImage()
+                //Aquí se podría guardar o procesar la imagen
+                val buffer = imagen.planes[0].buffer
+                val bytes = ByteArray(buffer.capacity())
+                buffer.get(bytes)
+                guardar(bytes)
+            } catch (e: FileNotFoundException) {
+                e.printStackTrace()
+            } catch (e: IOException) {
+                e.printStackTrace()
+            } finally {
+                if (imagen != null) {
+                    imagen.close()
+                }
+            }
+        }
+        private fun guardar(bytes: ByteArray){
+            val fichero: File = File("${Environment.getExternalStorageDirectory()}/micamara2.jpg")
+            Toast.makeText(this@MainActivity, "/micamara2.jpg saved", Toast.LENGTH_SHORT).show()
+
+            var output: OutputStream? = null
+            try {
+                output = FileOutputStream(fichero)
+                output.write(bytes)
+                output.close()
+            }finally {
+                if (null != output) {
+                    output.close()
+                }
+            }
         }
     }
 }
