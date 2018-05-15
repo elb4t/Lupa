@@ -12,7 +12,6 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
-import android.support.design.widget.FloatingActionButton
 import android.support.design.widget.Snackbar
 import android.support.v4.app.ActivityCompat
 import android.support.v7.app.AppCompatActivity
@@ -47,7 +46,7 @@ class MainActivity : AppCompatActivity() {
     var maxzoom: Float = 0.toFloat()
     var zoom: Rect? = null
 
-    private val btnCapture: FloatingActionButton? = null
+    private var camera: Int = 0
     private var mJPEGRequestBuilder: CaptureRequest.Builder? = null
     private var mImageReader: ImageReader? = null
     private var dimensionesJPEG: Size? = null
@@ -76,6 +75,25 @@ class MainActivity : AppCompatActivity() {
         startBackgroundThread()
         Log.i(TAG, "Setting textureListener a textureview")
         textureview.surfaceTextureListener = textureListener
+        enumeraCamaras()
+    }
+
+    private fun enumeraCamaras() {
+        val manager: CameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        try {
+            val cameras: Array<String> = manager.cameraIdList
+            for (id: String in cameras) {
+                val characteristics: CameraCharacteristics = manager.getCameraCharacteristics(id)
+                var keys = characteristics.keys
+                for (key in keys) {
+                    var nombrecaracteristica: String = key.name
+                    Log.e(TAG, "Cámara : $id : $nombrecaracteristica")
+                }
+            }
+        } catch (e: CameraAccessException) {
+            Log.e(TAG, "No puedo obtener lista de cámaras")
+            e.printStackTrace()
+        }
     }
 
     protected fun startBackgroundThread() {
